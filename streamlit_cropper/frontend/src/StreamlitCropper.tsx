@@ -14,17 +14,39 @@ interface PythonArgs {
     strokeWidth: number
     imageData: string // base64 string
     lockAspect: boolean
+    widthMode: string // 'stretch' | 'content'
 }
 
-
+const applyStretchMode = (fabricCanvas: Canvas, canvasWidth: number, canvasHeight: number, containerWidth: number) => {
+    const scaleFactor = containerWidth / canvasWidth;
+    fabricCanvas.setDimensions(
+        { width: `${containerWidth}px`, height: `${canvasHeight * scaleFactor}px` },
+        { cssOnly: true }
+    );
+    fabricCanvas.setZoom(scaleFactor);
+    Streamlit.setFrameHeight(Math.ceil(canvasHeight * scaleFactor));
+};
 
 const StreamlitCropper = (props: ComponentProps) => {
     const [canvas, setCanvas] = useState<Canvas | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const rectRef = useRef<Rect | null>(null);
-    const {canvasWidth, canvasHeight, imageData}: PythonArgs = props.args;
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const [containerWidth, setContainerWidth] = useState<number | null>(null);
+    const {canvasWidth, canvasHeight, imageData, widthMode}: PythonArgs = props.args;
     // imageData is now a base64 string (data URL)
     const dataUri = imageData || "";
+
+    // Measure actual container width via ResizeObserver
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const ro = new ResizeObserver((entries) => {
+            const width = entries[0].contentRect.width;
+            if (width > 0) setContainerWidth(width);
+        });
+        ro.observe(containerRef.current);
+        return () => ro.disconnect();
+    }, []);
 
     /**
      * Initialize canvas on mount and add a rectangle
@@ -33,7 +55,6 @@ const StreamlitCropper = (props: ComponentProps) => {
         // Only initialize Fabric once
         if (!canvasRef.current || canvas) return;
         const {rectTop, rectLeft, rectWidth, rectHeight, boxColor, strokeWidth, lockAspect}: PythonArgs = props.args;
-        console.log(lockAspect, "lockAspect")
         const fabricCanvas = new Canvas(canvasRef.current, {
             enableRetinaScaling: false,
             uniformScaling: lockAspect
@@ -55,18 +76,17 @@ const StreamlitCropper = (props: ComponentProps) => {
             objectCaching: true,
             stroke: boxColor,
             strokeWidth: strokeWidth,
-            // lockScalingFlip: true,
         });
         rect.set({
             hasRotatingControl: false,
-        });        // Hide the rotation control and show/hide edge controls based on lockAspect
+        });
         rect.setControlsVisibility && rect.setControlsVisibility({
-            mt: !lockAspect, // middle top
-            mb: !lockAspect, // middle bottom
-            ml: !lockAspect, // middle left
-            mr: !lockAspect, // middle right
-            mtr: false,      // rotation control
-            tl: true,        // always show corners for free resize
+            mt: !lockAspect,
+            mb: !lockAspect,
+            ml: !lockAspect,
+            mr: !lockAspect,
+            mtr: false,
+            tl: true,
             tr: true,
             bl: true,
             br: true
@@ -74,14 +94,26 @@ const StreamlitCropper = (props: ComponentProps) => {
         fabricCanvas.add(rect);
         rectRef.current = rect;
 
+        // For content mode, set frame height immediately.
+        // Stretch mode is handled by the containerWidth useEffect.
+        if (widthMode !== 'stretch') {
+            Streamlit.setFrameHeight();
+        }
+
         setCanvas(fabricCanvas);
-        Streamlit.setFrameHeight();
 
         return () => {
             fabricCanvas.dispose();
         };
         // eslint-disable-next-line
     }, []);
+
+    // Handle stretch mode — apply when containerWidth is measured or changes
+    useEffect(() => {
+        if (!canvas || widthMode !== 'stretch' || !containerWidth) return;
+        applyStretchMode(canvas, canvasWidth, canvasHeight, containerWidth);
+        canvas.requestRenderAll();
+    }, [containerWidth, canvas, widthMode, canvasWidth, canvasHeight]);
 
     // Update rectangle properties when props.args change
     useEffect(() => {
@@ -97,7 +129,6 @@ const StreamlitCropper = (props: ComponentProps) => {
             strokeWidth: strokeWidth,
             hasRotatingControl: false,
         });
-        // Hide the rotation control and show/hide edge controls based on lockAspect
         rect.setControlsVisibility && rect.setControlsVisibility({
             mt: !lockAspect,
             mb: !lockAspect,
@@ -128,7 +159,7 @@ const StreamlitCropper = (props: ComponentProps) => {
             const coords = canvas.getObjects()[0].getBoundingRect()
             Streamlit.setComponentValue({coords:coords})
         }
-        
+
         if (realtimeUpdate) {
         canvas.on("object:modified", handleEvent)
         return () => {
@@ -144,9 +175,9 @@ const StreamlitCropper = (props: ComponentProps) => {
     })
 
     return (
-        <>
+        <div ref={containerRef} style={{ width: '100%' }}>
             <canvas ref={canvasRef} width={canvasWidth} height={canvasHeight}/>
-        </>
+        </div>
     )
 };
 

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"stretch\\\\|use_container_width\" /c/Users/mrutter/Programming/streamlit-cropper --include=*.py)"
+    ]
+  }
+}

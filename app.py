@@ -29,18 +29,24 @@ return_type_dict = {
 return_type = return_type_dict[return_type_choice]
 
 if img_file:
+    with st.expander("Original Image", expanded=False, width='stretch'):
+        st.image(img_file)
     img = Image.open(img_file)
     if not realtime_update:
         st.write("Double click to save crop")
     if return_type == 'box':
-        rect = st_cropper(
-            img,
-            realtime_update=realtime_update,
-            box_color=box_color,
-            aspect_ratio=aspect_ratio,
-            return_type=return_type,
-            stroke_width=stroke_width
-        )
+        with st.container(border=True,width=500):
+            rect = st_cropper(
+                img,
+                realtime_update=realtime_update,
+                box_color=box_color,
+                aspect_ratio=aspect_ratio,
+                return_type=return_type,
+                stroke_width=stroke_width,
+                display_width=400
+                # width='content'
+            )
+        st.write(rect)
         raw_image = np.asarray(img).astype('uint8')
         left, top, width, height = tuple(map(int, rect.values()))
         st.write(rect)
@@ -49,18 +55,21 @@ if img_file:
         st.image(Image.fromarray(masked_image), caption='masked image')
     else:
         # Get a cropped image from the frontend
+        # with st.container(border=True):
         cropped_img = st_cropper(
             img,
             realtime_update=realtime_update,
             box_color=box_color,
             aspect_ratio=aspect_ratio,
             return_type=return_type,
-            stroke_width=stroke_width
+            stroke_width=stroke_width,
+            display_height=50
         )
+        st.image(image=img, width='content')
 
         # Manipulate cropped image at will
         st.write("Preview")
-        _ = cropped_img.thumbnail((150, 150))
+        # _ = cropped_img.thumbnail((150, 150))
         st.image(cropped_img)
 
         # Save the cropped image to a BytesIO buffer in PNG format

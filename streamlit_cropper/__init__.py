@@ -1,12 +1,14 @@
 import os
+import warnings
 import streamlit.components.v1 as components
 from PIL import Image
-from typing import Optional
+from typing import Literal, Optional, Tuple
 import numpy as np
 import io
 import base64
 
 _RELEASE = True
+_UNSET = object()  # sentinel for detecting explicit should_resize_image usage
 
 if not _RELEASE:
     _component_func = components.declare_component(
@@ -19,16 +21,27 @@ else:
     _component_func = components.declare_component("st_cropper", path=build_dir)
 
 
-def _resize_img(img: Image, max_height: int = 700, max_width: int = 700) -> Image:
-    # Resize the image to be a max of 700x700 by default, or whatever the user
-    # provides. If streamlit has an attribute to expose the default width of a widget,
-    # we should use that instead.
-    if img.height > max_height:
-        ratio = max_height / img.height
-        img = img.resize((int(img.width * ratio), int(img.height * ratio)))
-    if img.width > max_width:
-        ratio = max_width / img.width
-        img = img.resize((int(img.width * ratio), int(img.height * ratio)))
+def _resize_img(img: Image, max_height: int = 700, max_width: int = 700,
+                target_width: Optional[int] = None, target_height: Optional[int] = None) -> Image:
+    """Resize the image for display, maintaining aspect ratio.
+
+    If target_width is set, resize to that exact width.
+    If target_height is set, resize to that exact height.
+    Otherwise, cap at max_height x max_width (legacy behavior).
+    """
+    if target_width is not None and target_width < img.width:
+        ratio = target_width / img.width
+        img = img.resize((target_width, int(img.height * ratio)))
+    elif target_height is not None and target_height < img.height:
+        ratio = target_height / img.height
+        img = img.resize((int(img.width * ratio), target_height))
+    else:
+        if img.height > max_height:
+            ratio = max_height / img.height
+            img = img.resize((int(img.width * ratio), int(img.height * ratio)))
+        if img.width > max_width:
+            ratio = max_width / img.width
+            img = img.resize((int(img.width * ratio), int(img.height * ratio)))
     return img
 
 
@@ -68,18 +81,17 @@ def _recommended_box(img: Image, aspect_ratio: tuple = None) -> dict:
         height = box[3] - box[1]
     return {'left': int(left), 'top': int(top), 'width': int(width), 'height': int(height)}
 
-def _get_cropped_image(img_file:Image, should_resize_image:bool, orig_file: Image, rect: dict):
-    # Return a cropped image.
-    if not should_resize_image:
-        cropped_img = img_file.crop(
-                (rect['left'], rect['top'], rect['width'] + rect['left'], rect['height'] + rect['top']))
-    else:
-        cropped_img = orig_file.crop(
-                (rect['left'], rect['top'], rect['width'] + rect['left'], rect['height'] + rect['top']))
+def _get_cropped_image(img_file:Image, was_resized:bool, orig_file: Image, rect: dict):
+    # Return a cropped image. Use original if image was resized (coords already scaled back).
+    source = orig_file if was_resized else img_file
+    cropped_img = source.crop(
+            (rect['left'], rect['top'], rect['width'] + rect['left'], rect['height'] + rect['top']))
     return cropped_img
 
 def st_cropper(img_file: Image, realtime_update: bool = True, default_coords: Optional[tuple] = None, box_color: str = 'blue', aspect_ratio: tuple = None,
-               return_type: str = 'image', box_algorithm=None, key=None, should_resize_image: bool = True, stroke_width = 3) -> Image.Image | dict | tuple[Image.Image, dict]:
+               return_type: str = 'image', box_algorithm=None, key=None, should_resize_image = _UNSET, stroke_width = 3,
+               display_width: Optional[int] = None, display_height: Optional[int] = None,
+               width: Literal['stretch', 'content'] = 'content') -> Image.Image | dict | tuple[Image.Image, dict]:
     """Create a new instance of "st_cropper".
 
     Parameters
@@ -112,11 +124,19 @@ def st_cropper(img_file: Image, realtime_update: bool = True, default_coords: Op
         None, and the component's arguments are changed, the component will
         be re-mounted in the Streamlit frontend and lose its current state.
     should_resize_image: bool
-        A boolean to select whether the input image should be resized. As default the image
-        will be resized to 700x700 pixel for streamlit display. Set to false when using
-        custom box_algorithm.
+        Deprecated. Use display_width or display_height instead.
     stroke_width: int
         The width of the bounding box
+    display_width: int or None
+        The width in pixels for the displayed image. Maintains aspect ratio.
+        Cannot be used together with display_height.
+    display_height: int or None
+        The height in pixels for the displayed image. Maintains aspect ratio.
+        Cannot be used together with display_width.
+    width: 'stretch' or 'content'
+        The width mode of the widget container. 'content' (default) displays
+        at the image's natural size, capped at the container width. 'stretch'
+        fills the available column width.
 
     Returns
     -------
@@ -128,6 +148,21 @@ def st_cropper(img_file: Image, realtime_update: bool = True, default_coords: Op
     Tuple of PIL.Image and box coordinates
     """
 
+    # Validate parameters
+    if display_width is not None and display_height is not None:
+        raise ValueError("Cannot specify both display_width and display_height. Choose one to maintain aspect ratio.")
+
+    # Handle deprecated should_resize_image parameter
+    if should_resize_image is not _UNSET:
+        warnings.warn(
+            "should_resize_image is deprecated. Use display_width or display_height instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        should_resize_image = bool(should_resize_image)
+    else:
+        should_resize_image = True  # default behavior
+
     # Ensure that the return type is in the list of supported return types
     supported_types = ('image', 'box', 'both')
     if return_type.lower() not in supported_types:
@@ -137,8 +172,12 @@ def st_cropper(img_file: Image, realtime_update: bool = True, default_coords: Op
     resized_ratio_h = 1
     orig_file = img_file.copy()
 
-    # Load the image and resize to be no wider than the streamlit widget size
-    if should_resize_image:
+    # Handle image resizing
+    if display_width is not None or display_height is not None:
+        img_file = _resize_img(img_file, target_width=display_width, target_height=display_height)
+        resized_ratio_w = orig_file.width / img_file.width
+        resized_ratio_h = orig_file.height / img_file.height
+    elif should_resize_image:
         img_file = _resize_img(img_file)
         resized_ratio_w = orig_file.width / img_file.width
         resized_ratio_h = orig_file.height / img_file.height
@@ -184,7 +223,8 @@ def st_cropper(img_file: Image, realtime_update: bool = True, default_coords: Op
     component_value = _component_func(canvasWidth=canvas_width, canvasHeight=canvas_height,
                                       realtimeUpdate=realtime_update, strokeWidth=stroke_width,
                                       rectHeight=rect_height, rectWidth=rect_width, rectLeft=rect_left, rectTop=rect_top,
-                                      boxColor=box_color, imageData=image_data, lockAspect=lock_aspect, key=key)
+                                      boxColor=box_color, imageData=image_data, lockAspect=lock_aspect,
+                                      widthMode=width, key=key)
 
     # Return a cropped image using the box from the frontend
     if component_value:
@@ -193,19 +233,20 @@ def st_cropper(img_file: Image, realtime_update: bool = True, default_coords: Op
         rect = box
 
     # Scale box according to the resize ratio, but make sure new box does not exceed original bounds
-    if should_resize_image:
+    if resized_ratio_w != 1 or resized_ratio_h != 1:
         rect['left'] = max(0, int(rect['left'] * resized_ratio_w))
         rect['top'] = max(0, int(rect['top'] * resized_ratio_h))
         rect['width'] = min(orig_file.size[0] - rect['left'], int(rect['width'] * resized_ratio_w))
         rect['height'] = min(orig_file.size[1] - rect['top'], int(rect['height'] * resized_ratio_h))
 
     # Return the value desired by the return_type
+    was_resized = resized_ratio_w != 1 or resized_ratio_h != 1
     if return_type.lower() == 'image':
-        return _get_cropped_image(img_file, should_resize_image, orig_file, rect)
+        return _get_cropped_image(img_file, was_resized, orig_file, rect)
     elif return_type.lower() == 'box':
         return rect
     elif return_type.lower() == 'both':
-        return _get_cropped_image(img_file, should_resize_image, orig_file, rect), rect
+        return _get_cropped_image(img_file, was_resized, orig_file, rect), rect
 
 
 # Add some test code to play with the component while it's in development.
@@ -237,6 +278,16 @@ if not _RELEASE:
     }
     return_type = return_type_dict[return_type_choice]
 
+    # New sizing options
+    width_mode: Literal['stretch', 'content'] = st.sidebar.radio(label="Widget Width", options=["stretch", "content"])  # type: ignore[assignment]
+    size_mode = st.sidebar.radio(label="Display Size", options=["Default", "Custom Width", "Custom Height"])
+    display_width = None
+    display_height = None
+    if size_mode == "Custom Width":
+        display_width = st.sidebar.slider("Display Width (px)", 100, 1200, 500)
+    elif size_mode == "Custom Height":
+        display_height = st.sidebar.slider("Display Height (px)", 100, 1200, 400)
+
     if img_file:
         img = Image.open(img_file)
 
@@ -246,7 +297,10 @@ if not _RELEASE:
                 realtime_update=True,
                 box_color=box_color,
                 aspect_ratio=aspect_ratio,
-                return_type=return_type
+                return_type=return_type,
+                width=width_mode,
+                display_width=display_width,
+                display_height=display_height,
                 )
             raw_image = np.asarray(img).astype('uint8')
             left, top, width, height = tuple(map(int, rect.values()))
@@ -263,7 +317,10 @@ if not _RELEASE:
                 realtime_update=realtime_update,
                 box_color=box_color,
                 aspect_ratio=aspect_ratio,
-                return_type=return_type
+                return_type=return_type,
+                width=width_mode,
+                display_width=display_width,
+                display_height=display_height,
             )
 
             # Manipulate cropped image at will
