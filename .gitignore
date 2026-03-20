@@ -9,6 +9,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!streamlit_cropper/frontend/build/
 develop-eggs/
 dist/
 downloads/
@@ -26,7 +27,6 @@ share/python-wheels/
 *.egg
 MANIFEST
 node_modules/
-build/
 
 # Ruff
 .ruff_cache/
