@@ -94,11 +94,9 @@ const StreamlitCropper = (props: ComponentProps) => {
         fabricCanvas.add(rect);
         rectRef.current = rect;
 
-        // For content mode, set frame height immediately.
-        // Stretch mode is handled by the containerWidth useEffect.
-        if (widthMode !== 'stretch') {
-            Streamlit.setFrameHeight();
-        }
+        // Initial frame height — will be corrected by the containerWidth useEffect
+        // once the container is measured.
+        Streamlit.setFrameHeight();
 
         setCanvas(fabricCanvas);
 
@@ -108,10 +106,27 @@ const StreamlitCropper = (props: ComponentProps) => {
         // eslint-disable-next-line
     }, []);
 
-    // Handle stretch mode — apply when containerWidth is measured or changes
+    // Handle width mode — apply when containerWidth is measured or changes
     useEffect(() => {
-        if (!canvas || widthMode !== 'stretch' || !containerWidth) return;
-        applyStretchMode(canvas, canvasWidth, canvasHeight, containerWidth);
+        if (!canvas || !containerWidth) return;
+
+        if (widthMode === 'stretch') {
+            // Always fill the container width
+            applyStretchMode(canvas, canvasWidth, canvasHeight, containerWidth);
+        } else {
+            // Content mode: display at natural size, but cap at container width
+            if (canvasWidth > containerWidth) {
+                applyStretchMode(canvas, canvasWidth, canvasHeight, containerWidth);
+            } else {
+                // Reset to natural size (undo any previous scaling)
+                canvas.setDimensions(
+                    { width: `${canvasWidth}px`, height: `${canvasHeight}px` },
+                    { cssOnly: true }
+                );
+                canvas.setZoom(1);
+                Streamlit.setFrameHeight(canvasHeight);
+            }
+        }
         canvas.requestRenderAll();
     }, [containerWidth, canvas, widthMode, canvasWidth, canvasHeight]);
 
