@@ -1,8 +1,8 @@
 [project]
 name="streamlit-cropper"
 version="0.3.1"
-authors=[{name="Turner Anderson", email="andersontur11@gmail.com"}]
-description="A simple image cropper for Streamlit"
+authors=[{name="Turner Anderson, Matt Rutter", email="mattrutter@dsadetection.com"}]
+description="A simple image cropper for Streamlit with support for content resizing"
 readme="README.md"
 requires-python=">=3.10"
 classifiers = [
